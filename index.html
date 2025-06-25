@@ -301,47 +301,89 @@
         }
 
         function handleFile(file) {
+            console.log('File selected:', file.name, file.type, file.size);
+            
+            if (file.type !== 'application/pdf') {
+                showStatus('❌ Please select a PDF file only.', 'error');
+                return;
+            }
+            
             selectedFile = file;
             fileName.textContent = file.name;
             fileSize.textContent = `Size: ${(file.size / 1024 / 1024).toFixed(2)} MB`;
             fileInfo.style.display = 'block';
             convertBtn.disabled = false;
             hideStatus();
+            showStatus('✅ PDF file loaded successfully! Click Convert to EPUB.', 'success');
         }
 
         // Convert button handler
         convertBtn.addEventListener('click', convertPdfToEpub);
 
         async function convertPdfToEpub() {
-            if (!selectedFile) return;
+            if (!selectedFile) {
+                showStatus('❌ Please select a PDF file first.', 'error');
+                return;
+            }
 
             try {
                 convertBtn.disabled = true;
                 showProgress();
                 updateProgress(10);
+                showStatus('📖 Reading PDF file...', 'success');
+
+                console.log('Starting conversion for:', selectedFile.name);
 
                 // Load PDF
                 const arrayBuffer = await selectedFile.arrayBuffer();
-                const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+                console.log('PDF loaded, size:', arrayBuffer.byteLength);
+                
+                showStatus('🔍 Processing PDF pages...', 'success');
+                
+                // Check if PDF.js is loaded
+                if (typeof pdfjsLib === 'undefined') {
+                    throw new Error('PDF.js library not loaded');
+                }
+                
+                const pdf = await pdfjsLib.getDocument({data: arrayBuffer}).promise;
+                console.log('PDF parsed, pages:', pdf.numPages);
                 updateProgress(30);
 
                 // Extract text from all pages
                 let fullText = '';
                 const pageCount = pdf.numPages;
                 
+                showStatus(`📄 Extracting text from ${pageCount} pages...`, 'success');
+                
                 for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
-                    const page = await pdf.getPage(pageNum);
-                    const textContent = await page.getTextContent();
-                    const pageText = textContent.items.map(item => item.str).join(' ');
-                    fullText += pageText + '\n\n';
-                    updateProgress(30 + (pageNum / pageCount) * 40);
+                    try {
+                        const page = await pdf.getPage(pageNum);
+                        const textContent = await page.getTextContent();
+                        const pageText = textContent.items.map(item => item.str).join(' ');
+                        fullText += pageText + '\n\n';
+                        console.log(`Page ${pageNum} processed, text length:`, pageText.length);
+                        updateProgress(30 + (pageNum / pageCount) * 40);
+                        showStatus(`📄 Processing page ${pageNum} of ${pageCount}...`, 'success');
+                    } catch (pageError) {
+                        console.error(`Error processing page ${pageNum}:`, pageError);
+                        // Continue with other pages
+                    }
+                }
+
+                console.log('Total extracted text length:', fullText.length);
+                
+                if (fullText.trim().length === 0) {
+                    throw new Error('No text could be extracted from the PDF. This might be a scanned PDF or contain only images.');
                 }
 
                 updateProgress(80);
+                showStatus('📚 Creating EPUB file...', 'success');
 
                 // Create EPUB
                 const epub = await createEPUB(selectedFile.name.replace('.pdf', ''), fullText);
                 updateProgress(100);
+
+                showStatus('💾 Downloading EPUB file...', 'success');
 
                 // Download the EPUB
                 const blob = new Blob([epub], { type: 'application/epub+zip' });
@@ -358,7 +400,7 @@
                 
             } catch (error) {
                 console.error('Conversion error:', error);
-                showStatus('❌ Conversion failed. Please try another PDF file.', 'error');
+                showStatus(`❌ Error: ${error.message}`, 'error');
             } finally {
                 convertBtn.disabled = false;
                 hideProgress();
